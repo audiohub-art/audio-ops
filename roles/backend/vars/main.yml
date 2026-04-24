@@ -4,3 +4,5 @@ app: audio
 secrets: "{{ lookup('pipe', 'keybase fs read /keybase/team/audiohub/secrets.yml') | from_yaml }}"
 domain: audiohub.art
 subdomain: api
+s3_subdomain: s3
+s3_domain: audiohub.art

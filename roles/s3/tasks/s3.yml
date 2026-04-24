@@ -88,7 +88,7 @@
         name: "{{ app }}-s3-init-bucket"
         namespace: "{{ k8s_namespace }}"
       spec:
-        ttlSecondsAfterFinished: 86400
+        ttlSecondsAfterFinished: 3600
         template:
           metadata:
             labels:
@@ -96,20 +96,54 @@
           spec:
             restartPolicy: OnFailure
             containers:
-              - name: minio-mc
-                image: minio/mc:latest
+              - name: aws-cli-init
+                image: amazon/aws-cli:latest
                 envFrom:
                   - secretRef:
                       name: "s3-secrets"
+                env:
+                  - name: AWS_ACCESS_KEY_ID
+                    valueFrom:
+                      secretKeyRef:
+                        name: "s3-secrets"
+                        key: MINIO_ROOT_USER
+                  - name: AWS_SECRET_ACCESS_KEY
+                    valueFrom:
+                      secretKeyRef:
+                        name: "s3-secrets"
+                        key: MINIO_ROOT_PASSWORD
                 command:
                   - /bin/sh
                   - -c
                   - |
-                    until mc alias set myminio http://{{ app }}-s3:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do
+                    ENDPOINT="http://{{ app }}-s3:9000"
+
+                    echo "1. Waiting for S3 server to be ready..."
+                    until aws s3 ls --endpoint-url $ENDPOINT > /dev/null 2>&1; do
                       sleep 2
                     done
 
-                    echo "Create bucket..."
-                    mc mb myminio/$MINIO_BUCKET --ignore-existing
+                    echo "2. Create bucket..."
+                    aws s3 mb s3://$MINIO_BUCKET --endpoint-url $ENDPOINT || true
 
-                    echo "Bucket create successfully"
+                    echo "3. Create CORS policy file dynamically..."
+                    cat <<EOF > cors.json
+                    {
+                      "CORSRules": [
+                        {
+                          "AllowedHeaders": ["*"],
+                          "AllowedMethods": ["GET", "HEAD"],
+                          "AllowedOrigins": ["https://audiohub.art",],
+                          "ExposeHeaders": []
+                        }
+                      ]
+                    }
+                    EOF
+
+                    echo "4. Apply CORS policy..."
+                    aws s3api put-bucket-cors \
+                      --bucket $MINIO_BUCKET \
+                      --cors-configuration file://cors.json \
+                      --endpoint-url $ENDPOINT
+
+                    echo "Bucket initialized and CORS configured success
